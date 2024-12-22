@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>MemberPress Manager</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <!-- Header with tabs -->
+        <div class="header">
+            <div class="tab-buttons">
+                <button class="tab-button active" data-tab="members">Members</button>
+                <button class="tab-button" data-tab="subscriptions">Subscriptions</button>
+            </div>
+            <div class="search-box">
+                <input type="text" id="search" placeholder="Search...">
+            </div>
+        </div>
+
+        <!-- Members Tab -->
+        <div id="members-tab" class="tab-content active">
+            <!-- Loading spinner -->
+            <div id="members-loading" class="loading-spinner">
+                <div class="spinner"></div>
+            </div>
+            
+            <!-- Members list -->
+            <div id="members-list" class="data-list"></div>
+            
+            <!-- Pagination -->
+            <div id="members-pagination" class="pagination"></div>
+        </div>
+
+        <!-- Subscriptions Tab -->
+        <div id="subscriptions-tab" class="tab-content">
+            <!-- Loading spinner -->
+            <div id="subscriptions-loading" class="loading-spinner">
+                <div class="spinner"></div>
+            </div>
+            
+            <!-- Subscriptions list -->
+            <div id="subscriptions-list" class="data-list"></div>
+            
+            <!-- Pagination -->
+            <div id="subscriptions-pagination" class="pagination"></div>
+        </div>
+
+        <!-- Status message -->
+        <div id="status" class="status"></div>
+    </div>
+    <script src="popup.js"></script>
+</body>
+</html>
