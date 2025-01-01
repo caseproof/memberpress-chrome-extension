@@ -2,7 +2,9 @@
 <html>
 <head>
     <title>MemberPress Manager</title>
-    <link rel="stylesheet" href="styles.css">
+    <link rel="stylesheet" href="../styles/shared.css">
+    <link rel="stylesheet" href="popup.css">
+    <link rel="stylesheet" href="../components/notifications/notifications.css">
 </head>
 <body>
     <div class="container">
@@ -45,9 +47,13 @@
             <div id="subscriptions-pagination" class="pagination"></div>
         </div>
 
+        <div id="notifications-tab" class="tab-content">
+            <!-- NotificationsUI will manage this content -->
+        </div>
+
         <!-- Status message -->
         <div id="status" class="status"></div>
     </div>
-    <script src="popup.js"></script>
+    <script type="module" src="popup.js"></script>
 </body>
 </html>

@@ -1,4 +1,15 @@
+import { NotificationService } from './services/NotificationService.js';
+import { NotificationsUI } from './components/notifications/notifications.js';
+
 document.addEventListener('DOMContentLoaded', async () => {
+    // Initialize notification service
+    const notificationService = new NotificationService();
+    await notificationService.initialize();
+
+    // Initialize notifications UI
+    const notificationsContainer = document.getElementById('notifications-tab');
+    const notificationsUI = new NotificationsUI(notificationsContainer, notificationService);
+
     // State management
     let currentTab = 'members';
     let currentPage = 1;
