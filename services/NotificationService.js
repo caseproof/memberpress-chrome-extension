@@ -5,6 +5,7 @@ export class NotificationService {
         this.notifications = [];
         this.settings = null;
         this.initialized = false;
+        this.lastMemberCheck = null;
     }
 
     async initialize() {
@@ -12,16 +13,33 @@ export class NotificationService {
         
         this.settings = await this.loadSettings();
         await this.loadNotifications();
+        await this.loadLastCheckTimes();
         this.startPeriodicCheck();
         this.initialized = true;
 
-        // Set up message listener for background script communication
         chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
             if (message.type === 'notification_update') {
                 this.loadNotifications();
             }
         });
     }
+
+    async loadLastCheckTimes() {
+        return new Promise((resolve) => {
+            chrome.storage.local.get({
+                lastMemberCheck: null,
+            }, (items) => {
+                // Set last check to 24 hours ago if not set
+                const oneDayAgo = new Date();
+                oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+                this.lastMemberCheck = items.lastMemberCheck || oneDayAgo.toISOString();
+                console.log('Loaded last check time:', this.lastMemberCheck);
+                resolve();
+            });
+        });
+    }
+
+   
 
     async loadSettings() {
         return new Promise((resolve) => {
@@ -37,6 +55,126 @@ export class NotificationService {
                 }
             }, (items) => resolve(items.notifications));
         });
+    }
+
+    getMinutesDifference(date1, date2) {
+        const diff = date1.getTime() - date2.getTime();
+        return Math.floor(diff / (1000 * 60));
+    }
+
+    async fetchNewMembers() {
+        try {
+            // Use a date 24 hours ago as the minimum check time
+            const oneDayAgo = new Date();
+            oneDayAgo.setDate(oneDayAgo.getDate() - 1);
+            const checkTime = new Date(this.lastMemberCheck);
+            
+            // If lastMemberCheck is more than 24 hours ago, use 24 hours ago
+            const afterDate = checkTime < oneDayAgo ? oneDayAgo : checkTime;
+            
+            console.log('Checking for members after:', afterDate.toISOString());
+            
+            const response = await this.makeApiRequest('members', {
+                after: afterDate.toISOString(),
+                per_page: 100,
+                orderby: 'registered_at',
+                order: 'desc'
+            });
+
+            // Update last check time to now
+            this.lastMemberCheck = new Date().toISOString();
+            await this.saveLastCheckTimes();
+
+            // Process the members
+            if (response.data && response.data.length > 0) {
+                console.log('Found members:', response.data);
+                return response.data;
+            }
+
+            return [];
+
+        } catch (error) {
+            console.error('Error fetching new members:', error);
+            return [];
+        }
+    }
+
+    async processNewMembers(members) {
+        const notifications = members.map(member => ({
+            id: `new-member-${member.id}-${Date.now()}`,
+            type: 'new_member',
+            title: 'New Member',
+            message: `${member.first_name || ''} ${member.last_name || ''} (${member.email}) has joined`,
+            data: member,
+            timestamp: Date.now(),
+            read: false,
+            memberDate: member.registered_at
+        }));
+
+        if (notifications.length > 0) {
+            console.log('Creating notifications for members:', notifications);
+            // Add new notifications to the beginning of the array
+            this.notifications = [...notifications, ...this.notifications].slice(0, 100);
+            await this.saveNotifications();
+            this.dispatchEvent('notifications_updated', { count: notifications.length });
+        }
+    }
+
+    async checkForUpdates() {
+        if (!this.settings.enabled || !this.settings.newMembers) return;
+        
+        try {
+            console.log('Checking for new members since:', this.lastMemberCheck);
+            const newMembers = await this.fetchNewMembers();
+            
+            if (newMembers.length > 0) {
+                console.log('Found new members:', newMembers.length);
+                await this.processNewMembers(newMembers);
+            }
+            
+            // Update badge count
+            this.updateBadge();
+            
+        } catch (error) {
+            console.error('Error checking for updates:', error);
+        }
+    }
+
+    async saveLastCheckTimes() {
+        return new Promise((resolve) => {
+            chrome.storage.local.set({
+                lastMemberCheck: this.lastMemberCheck
+            }, () => {
+                console.log('Saved last check time:', this.lastMemberCheck);
+                resolve();
+            });
+        });
+    }
+
+    startPeriodicCheck() {
+        if (!this.settings.enabled) return;
+        
+        // Initial check
+        this.checkForUpdates();
+        
+        // Set up periodic checks
+        setInterval(() => {
+            this.checkForUpdates();
+        }, this.settings.checkInterval * 60 * 1000);
+    }
+
+    formatRelativeTime(timestamp) {
+        const now = Date.now();
+        const diff = now - timestamp;
+        const minutes = Math.floor(diff / (1000 * 60));
+        const hours = Math.floor(minutes / 60);
+        const days = Math.floor(hours / 24);
+
+        if (minutes < 60) return `${minutes}m ago`;
+        if (hours < 24) return `${hours}h ago`;
+        if (days < 7) return `${days}d ago`;
+        
+        return new Date(timestamp).toLocaleDateString();
     }
 
     async loadNotifications() {
@@ -58,193 +196,6 @@ export class NotificationService {
                 resolve();
             });
         });
-    }
-
-    startPeriodicCheck() {
-        if (!this.settings.enabled) return;
-        
-        // Initial check
-        this.checkForUpdates();
-        
-        // Set up periodic checks
-        setInterval(() => {
-            this.checkForUpdates();
-        }, this.settings.checkInterval * 60 * 1000);
-    }
-
-    async checkForUpdates() {
-        if (!this.settings.enabled) return;
-        
-        const now = Date.now();
-        const lastCheck = this.settings.lastCheck || 0;
-        
-        try {
-            const updates = await this.fetchUpdates(lastCheck);
-            await this.processUpdates(updates);
-            await this.updateLastCheck(now);
-        } catch (error) {
-            console.error('Error checking for updates:', error);
-        }
-    }
-
-    async fetchUpdates(since) {
-        const credentials = await this.getCredentials();
-        if (!credentials.baseUrl || !credentials.apiKey) {
-            throw new Error('API credentials not configured');
-        }
-
-        const updates = {
-            failedPayments: [],
-            newMembers: [],
-            canceledSubscriptions: [],
-            expiringMemberships: []
-        };
-
-        if (this.settings.failedPayments) {
-            updates.failedPayments = await this.fetchFailedPayments(since);
-        }
-
-        if (this.settings.newMembers) {
-            updates.newMembers = await this.fetchNewMembers(since);
-        }
-
-        if (this.settings.canceledSubscriptions) {
-            updates.canceledSubscriptions = await this.fetchCanceledSubscriptions(since);
-        }
-
-        if (this.settings.expiringMemberships) {
-            updates.expiringMemberships = await this.fetchExpiringMemberships();
-        }
-
-        return updates;
-    }
-
-    async fetchFailedPayments(since) {
-        const response = await this.makeApiRequest('transactions', {
-            status: 'failed',
-            after: new Date(since).toISOString()
-        });
-        return response.data || [];
-    }
-
-    async fetchNewMembers(since) {
-        const response = await this.makeApiRequest('members', {
-            after: new Date(since).toISOString()
-        });
-        return response.data || [];
-    }
-
-    async fetchCanceledSubscriptions(since) {
-        const response = await this.makeApiRequest('subscriptions', {
-            status: 'cancelled',
-            after: new Date(since).toISOString()
-        });
-        return response.data || [];
-    }
-
-    async fetchExpiringMemberships() {
-        const thirtyDaysFromNow = new Date();
-        thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
-        
-        const response = await this.makeApiRequest('transactions', {
-            status: 'active',
-            expires_before: thirtyDaysFromNow.toISOString()
-        });
-        return response.data || [];
-    }
-
-    async processUpdates(updates) {
-        const notifications = [];
-
-        // Process failed payments
-        updates.failedPayments.forEach(payment => {
-            notifications.push({
-                id: `payment-${payment.id}`,
-                type: 'failed_payment',
-                title: 'Failed Payment',
-                message: `Payment failed for ${payment.member.email} (${payment.total})`,
-                data: payment,
-                timestamp: Date.now(),
-                read: false
-            });
-        });
-
-        // Process new members
-        updates.newMembers.forEach(member => {
-            notifications.push({
-                id: `member-${member.id}`,
-                type: 'new_member',
-                title: 'New Member',
-                message: `${member.first_name} ${member.last_name} (${member.email}) has joined`,
-                data: member,
-                timestamp: Date.now(),
-                read: false
-            });
-        });
-
-        // Process canceled subscriptions
-        updates.canceledSubscriptions.forEach(subscription => {
-            notifications.push({
-                id: `subscription-${subscription.id}`,
-                type: 'subscription_canceled',
-                title: 'Subscription Canceled',
-                message: `${subscription.member.email}'s subscription was canceled`,
-                data: subscription,
-                timestamp: Date.now(),
-                read: false
-            });
-        });
-
-        // Process expiring memberships
-        updates.expiringMemberships.forEach(membership => {
-            const daysUntilExpiry = this.calculateDaysUntilExpiry(membership.expires_at);
-            if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
-                notifications.push({
-                    id: `expiring-${membership.id}`,
-                    type: 'membership_expiring',
-                    title: 'Membership Expiring Soon',
-                    message: `${membership.member.email}'s membership expires in ${daysUntilExpiry} days`,
-                    data: membership,
-                    timestamp: Date.now(),
-                    read: false
-                });
-            }
-        });
-
-        if (notifications.length > 0) {
-            this.notifications = [...notifications, ...this.notifications].slice(0, 100);
-            await this.saveNotifications();
-            this.dispatchEvent('notifications_updated');
-        }
-    }
-
-    calculateDaysUntilExpiry(expiryDate) {
-        const now = new Date();
-        const expiry = new Date(expiryDate);
-        const diffTime = expiry - now;
-        return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
-    }
-
-    async markAsRead(notificationIds) {
-        let updated = false;
-        this.notifications = this.notifications.map(notification => {
-            if (notificationIds.includes(notification.id) && !notification.read) {
-                updated = true;
-                return { ...notification, read: true };
-            }
-            return notification;
-        });
-
-        if (updated) {
-            await this.saveNotifications();
-            this.dispatchEvent('notifications_updated');
-        }
-    }
-
-    async clearNotifications() {
-        this.notifications = [];
-        await this.saveNotifications();
-        this.dispatchEvent('notifications_cleared');
     }
 
     updateBadge() {
@@ -284,29 +235,26 @@ export class NotificationService {
         const queryString = new URLSearchParams(params).toString();
         const url = `${credentials.baseUrl}/wp-json/mp/v1/${endpoint}${queryString ? '?' + queryString : ''}`;
 
-        const response = await fetch(url, {
-            headers: {
-                'MEMBERPRESS-API-KEY': credentials.apiKey,
-                'Accept': 'application/json'
-            }
-        });
+        console.log('Making API request to:', url);
 
-        if (!response.ok) {
-            throw new Error(`API request failed: ${response.statusText}`);
-        }
-
-        return await response.json();
-    }
-
-    async updateLastCheck(timestamp) {
-        this.settings.lastCheck = timestamp;
-        return new Promise((resolve) => {
-            chrome.storage.sync.set({
-                notifications: {
-                    ...this.settings,
-                    lastCheck: timestamp
+        try {
+            const response = await fetch(url, {
+                headers: {
+                    'MEMBERPRESS-API-KEY': credentials.apiKey,
+                    'Accept': 'application/json'
                 }
-            }, resolve);
-        });
+            });
+
+            if (!response.ok) {
+                throw new Error(`API request failed: ${response.statusText}`);
+            }
+
+            const data = await response.json();
+            console.log('API response:', data);
+            return { data };
+        } catch (error) {
+            console.error('API request failed:', error);
+            throw error;
+        }
     }
 }

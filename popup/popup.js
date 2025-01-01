@@ -1,4 +1,16 @@
+// popup.js
+import { NotificationsUI } from '../components/notifications/NotificationsUI.js';
+import { NotificationService } from '../services/NotificationService.js';
+
 document.addEventListener('DOMContentLoaded', async () => {
+    // Initialize NotificationService and UI
+    const notificationService = new NotificationService();
+    await notificationService.initialize();
+    
+    // Initialize NotificationsUI
+    const notificationsContainer = document.getElementById('notifications-tab');
+    const notificationsUI = new NotificationsUI(notificationsContainer, notificationService);
+
     // State management
     let currentTab = 'members';
     let currentPage = 1;
@@ -55,7 +67,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-  
     // Check extension configuration
     async function checkConfiguration() {
         const settings = await getStoredSettings();
@@ -80,7 +91,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 await loadSubscriptions();
                 break;
             case 'notifications':
-                await loadNotifications();
+                // NotificationsUI handles this
                 break;
         }
     }
@@ -285,8 +296,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-   
-
     // Helper: Navigate to member page in WordPress admin
     async function navigateToMemberPage(memberId) {
         const settings = await getStoredSettings();
@@ -333,7 +342,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-
     // Handle keyboard shortcuts
     document.addEventListener('keydown', (e) => {
         // Alt + N to switch to notifications tab
@@ -360,4 +368,3 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Initialize the application
     initialize();
 });
-            
