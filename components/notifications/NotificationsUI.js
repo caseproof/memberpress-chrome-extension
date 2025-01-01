@@ -1,6 +1,7 @@
 // NotificationsUI.js
 export class NotificationsUI {
     constructor(containerElement, notificationService) {
+        console.log('NotificationsUI constructor called');
         this.container = containerElement;
         this.notificationService = notificationService;
         this.currentFilter = 'all';
@@ -8,12 +9,14 @@ export class NotificationsUI {
     }
 
     initialize() {
+        console.log('NotificationsUI initializing');
         this.render();
         this.attachEventListeners();
         this.loadNotifications();
     }
 
     render() {
+        console.log('Rendering NotificationsUI');
         this.container.innerHTML = `
             <div class="notifications-header">
                 <div class="filter-buttons">
@@ -23,10 +26,10 @@ export class NotificationsUI {
                 </div>
                 <div class="action-buttons">
                     <button class="action-btn" id="mark-all-read">
-                        <i class="icon-check"></i> Mark All Read
+                        Mark All Read
                     </button>
                     <button class="action-btn" id="clear-notifications">
-                        <i class="icon-trash"></i> Clear All
+                        Clear All
                     </button>
                 </div>
             </div>
@@ -36,50 +39,34 @@ export class NotificationsUI {
         // Cache DOM elements
         this.listElement = this.container.querySelector('.notifications-list');
         this.filterButtons = this.container.querySelectorAll('.filter-btn');
-    }
-
-    attachEventListeners() {
-        // Filter buttons
-        this.filterButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                this.filterButtons.forEach(btn => btn.classList.remove('active'));
-                button.classList.add('active');
-                this.currentFilter = button.dataset.filter;
-                this.loadNotifications();
-            });
-        });
-
-        // Action buttons
-        this.container.querySelector('#mark-all-read').addEventListener('click', () => {
-            this.handleMarkAllRead();
-        });
-
-        this.container.querySelector('#clear-notifications').addEventListener('click', () => {
-            this.handleClearAll();
-        });
-
-        // Listen for notification updates
-        window.addEventListener('memberpress_notification', (event) => {
-            if (['notification_added', 'notifications_updated', 'notifications_cleared'].includes(event.detail.type)) {
-                this.loadNotifications();
-            }
-        });
+        console.log('UI elements rendered');
     }
 
     async loadNotifications() {
-        this.showLoading();
-        const notifications = await this.notificationService.loadNotifications();
-        this.renderNotifications(this.filterNotifications(notifications));
-        this.hideLoading();
+        console.log('Loading notifications');
+        try {
+            const notifications = await this.notificationService.loadNotifications();
+            console.log('Loaded notifications:', notifications);
+            this.renderNotifications(this.filterNotifications(notifications));
+        } catch (error) {
+            console.error('Error loading notifications:', error);
+            this.listElement.innerHTML = `
+                <div class="error-state">
+                    Error loading notifications. Please try again.
+                </div>
+            `;
+        }
     }
 
     filterNotifications(notifications) {
+        console.log('Filtering notifications:', this.currentFilter);
         if (this.currentFilter === 'all') return notifications;
         return notifications.filter(n => n.type === this.currentFilter);
     }
 
     renderNotifications(notifications) {
-        if (notifications.length === 0) {
+        console.log('Rendering notifications:', notifications);
+        if (!notifications || notifications.length === 0) {
             this.listElement.innerHTML = this.getEmptyStateHTML();
             return;
         }
@@ -88,19 +75,68 @@ export class NotificationsUI {
             this.getNotificationHTML(notification)
         ).join('');
 
-        // Attach click handlers to individual notifications
+        // Attach click handlers
         this.listElement.querySelectorAll('.notification-item').forEach(item => {
             item.addEventListener('click', () => {
+                console.log('Notification clicked:', item.dataset.id);
                 this.handleNotificationClick(item.dataset.id);
             });
         });
+    }
+
+    attachEventListeners() {
+        console.log('Attaching event listeners');
+        
+        // Filter buttons
+        this.filterButtons.forEach(button => {
+            button.addEventListener('click', () => {
+                console.log('Filter clicked:', button.dataset.filter);
+                this.filterButtons.forEach(btn => btn.classList.remove('active'));
+                button.classList.add('active');
+                this.currentFilter = button.dataset.filter;
+                this.loadNotifications();
+            });
+        });
+
+        // Action buttons
+        const markAllReadBtn = this.container.querySelector('#mark-all-read');
+        const clearAllBtn = this.container.querySelector('#clear-notifications');
+
+        if (markAllReadBtn) {
+            markAllReadBtn.addEventListener('click', () => {
+                console.log('Mark all read clicked');
+                this.handleMarkAllRead();
+            });
+        }
+
+        if (clearAllBtn) {
+            clearAllBtn.addEventListener('click', () => {
+                console.log('Clear all clicked');
+                this.handleClearAll();
+            });
+        }
+
+        // Listen for notification updates
+        window.addEventListener('memberpress_notification', (event) => {
+            console.log('Notification event received:', event.detail);
+            if (['notifications_updated', 'notifications_cleared'].includes(event.detail.type)) {
+                this.loadNotifications();
+            }
+        });
+    }
+
+    getEmptyStateHTML() {
+        return `
+            <div class="empty-state">
+                <p>No notifications</p>
+            </div>
+        `;
     }
 
     getNotificationHTML(notification) {
         return `
             <div class="notification-item ${notification.read ? '' : 'unread'}" 
                  data-id="${notification.id}">
-                <div class="notification-icon ${this.getIconClass(notification.type)}"></div>
                 <div class="notification-content">
                     <div class="notification-header">
                         <span class="notification-title">${notification.title}</span>
@@ -114,41 +150,22 @@ export class NotificationsUI {
         `;
     }
 
-    getEmptyStateHTML() {
-        return `
-            <div class="empty-state">
-                <div class="empty-icon"></div>
-                <p>No notifications</p>
-            </div>
-        `;
-    }
-
-    getIconClass(type) {
-        switch (type) {
-            case 'failed_payment': return 'icon-alert';
-            case 'new_member': return 'icon-user';
-            case 'subscription_canceled': return 'icon-x';
-            case 'membership_expiring': return 'icon-clock';
-            default: return 'icon-bell';
-        }
-    }
-
     formatTimeAgo(timestamp) {
         const seconds = Math.floor((Date.now() - timestamp) / 1000);
-        
         if (seconds < 60) return 'just now';
         if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
         if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
-        
         return new Date(timestamp).toLocaleDateString();
     }
 
     async handleNotificationClick(id) {
+        console.log('Handling notification click:', id);
         await this.notificationService.markAsRead([id]);
         this.loadNotifications();
     }
 
     async handleMarkAllRead() {
+        console.log('Handling mark all read');
         const notifications = await this.notificationService.loadNotifications();
         const unreadIds = notifications
             .filter(n => !n.read)
@@ -161,22 +178,10 @@ export class NotificationsUI {
     }
 
     async handleClearAll() {
+        console.log('Handling clear all');
         if (confirm('Are you sure you want to clear all notifications?')) {
             await this.notificationService.clearNotifications();
             this.loadNotifications();
         }
-    }
-
-    showLoading() {
-        this.listElement.innerHTML = `
-            <div class="loading-spinner">
-                <div class="spinner"></div>
-            </div>
-        `;
-    }
-
-    hideLoading() {
-        const spinner = this.listElement.querySelector('.loading-spinner');
-        if (spinner) spinner.remove();
     }
 }

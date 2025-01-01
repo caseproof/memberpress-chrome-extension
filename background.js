@@ -1,13 +1,27 @@
 // background.js
 import { NotificationService } from './services/NotificationService.js';
 
+let notificationService;
+let initialized = false;
+
 // Initialize NotificationService
-const notificationService = new NotificationService();
-notificationService.initialize();
+async function initializeServices() {
+    if (initialized) return;
+    
+    try {
+        notificationService = new NotificationService();
+        await notificationService.initialize();
+        initialized = true;
+        console.log("MemberPress Manager services initialized successfully");
+    } catch (error) {
+        console.error("Failed to initialize services:", error);
+    }
+}
 
 // Handle extension installation
-chrome.runtime.onInstalled.addListener(() => {
+chrome.runtime.onInstalled.addListener(async () => {
     console.log("MemberPress Manager Extension Installed");
+    await initializeServices();
     
     // Check for settings on installation
     chrome.storage.sync.get({
@@ -38,55 +52,79 @@ async function makeApiRequest(endpoint, options = {}) {
         throw new Error('Please configure the extension settings first');
     }
 
-    const response = await fetch(`${credentials.baseUrl}/wp-json/mp/v1/${endpoint}`, {
-        ...options,
-        headers: {
-            'MEMBERPRESS-API-KEY': credentials.apiKey,
-            'Accept': 'application/json',
-            'Content-Type': 'application/json',
-            ...options.headers
+    // Remove trailing slash from baseUrl if present
+    const baseUrl = credentials.baseUrl.replace(/\/$/, '');
+
+    try {
+        const response = await fetch(`${baseUrl}/wp-json/mp/v1/${endpoint}`, {
+            ...options,
+            headers: {
+                'MEMBERPRESS-API-KEY': credentials.apiKey,
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                ...options.headers
+            }
+        });
+
+        if (!response.ok) {
+            const errorText = await response.text();
+            throw new Error(errorText || 'API request failed');
         }
-    });
 
-    if (!response.ok) {
-        const error = await response.text();
-        throw new Error(error || 'API request failed');
+        const responseData = await response.json();
+        return {
+            data: responseData,
+            totalPages: parseInt(response.headers.get('X-WP-TotalPages')) || 1,
+            totalItems: parseInt(response.headers.get('X-WP-Total')) || 0
+        };
+    } catch (error) {
+        console.error(`API Request Failed for ${endpoint}:`, error);
+        throw error;
     }
-
-    return {
-        data: await response.json(),
-        totalPages: parseInt(response.headers.get('X-WP-TotalPages')) || 1,
-        totalItems: parseInt(response.headers.get('X-WP-Total')) || 0
-    };
 }
 
 // Message handlers for popup communication
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === "getMembers") {
-        makeApiRequest(`members?page=${message.page}&per_page=${message.perPage}${message.search ? '&search=' + encodeURIComponent(message.search) : ''}`)
-            .then(sendResponse)
-            .catch(error => sendResponse({ error: error.message }));
+    if (!initialized) {
+        initializeServices().then(() => handleMessage(message, sender, sendResponse));
         return true;
     }
     
-    if (message.type === "getMember") {
-        makeApiRequest(`members/${message.id}`)
-            .then(sendResponse)
-            .catch(error => sendResponse({ error: error.message }));
-        return true;
-    }
-
-    if (message.type === "getSubscriptions") {
-        makeApiRequest(`subscriptions?page=${message.page}&per_page=${message.perPage}${message.search ? '&search=' + encodeURIComponent(message.search) : ''}`)
-            .then(sendResponse)
-            .catch(error => sendResponse({ error: error.message }));
-        return true;
-    }
-
-    if (message.type === "getSubscription") {
-        makeApiRequest(`subscriptions/${message.id}`)
-            .then(sendResponse)
-            .catch(error => sendResponse({ error: error.message }));
-        return true;
-    }
+    handleMessage(message, sender, sendResponse);
+    return true;
 });
+
+async function handleMessage(message, sender, sendResponse) {
+    try {
+        let response;
+        
+        switch (message.type) {
+            case "getMembers":
+                response = await makeApiRequest(
+                    `members?page=${message.page}&per_page=${message.perPage}${message.search ? '&search=' + encodeURIComponent(message.search) : ''}`
+                );
+                break;
+                
+            case "getMember":
+                response = await makeApiRequest(`members/${message.id}`);
+                break;
+
+            case "getSubscriptions":
+                response = await makeApiRequest(
+                    `subscriptions?page=${message.page}&per_page=${message.perPage}${message.search ? '&search=' + encodeURIComponent(message.search) : ''}`
+                );
+                break;
+
+            case "getSubscription":
+                response = await makeApiRequest(`subscriptions/${message.id}`);
+                break;
+                
+            default:
+                throw new Error('Unknown message type');
+        }
+        
+        sendResponse(response);
+    } catch (error) {
+        sendResponse({ error: error.message });
+    }
+}
