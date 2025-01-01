@@ -1,182 +1,312 @@
-// notifications.js
-export class NotificationsUI {
-    constructor(containerElement, notificationService) {
-        this.container = containerElement;
-        this.notificationService = notificationService;
-        this.currentFilter = 'all';
-        this.initialize();
+// NotificationService.js
+export class NotificationService {
+    constructor() {
+        this.checkInterval = 5 * 60 * 1000; // 5 minutes default
+        this.notifications = [];
+        this.settings = null;
+        this.initialized = false;
     }
 
-    initialize() {
-        this.render();
-        this.attachEventListeners();
-        this.loadNotifications();
-    }
+    async initialize() {
+        if (this.initialized) return;
+        
+        this.settings = await this.loadSettings();
+        await this.loadNotifications();
+        this.startPeriodicCheck();
+        this.initialized = true;
 
-    render() {
-        this.container.innerHTML = `
-            <div class="notifications-header">
-                <div class="filter-buttons">
-                    <button class="filter-btn active" data-filter="all">All</button>
-                    <button class="filter-btn" data-filter="failed_payment">Failed Payments</button>
-                    <button class="filter-btn" data-filter="new_member">New Members</button>
-                </div>
-                <div class="action-buttons">
-                    <button class="action-btn" id="mark-all-read">
-                        <i class="icon-check"></i> Mark All Read
-                    </button>
-                    <button class="action-btn" id="clear-notifications">
-                        <i class="icon-trash"></i> Clear All
-                    </button>
-                </div>
-            </div>
-            <div class="notifications-list"></div>
-        `;
-
-        // Cache DOM elements
-        this.listElement = this.container.querySelector('.notifications-list');
-        this.filterButtons = this.container.querySelectorAll('.filter-btn');
-    }
-
-    attachEventListeners() {
-        // Filter buttons
-        this.filterButtons.forEach(button => {
-            button.addEventListener('click', () => {
-                this.filterButtons.forEach(btn => btn.classList.remove('active'));
-                button.classList.add('active');
-                this.currentFilter = button.dataset.filter;
-                this.loadNotifications();
-            });
-        });
-
-        // Action buttons
-        this.container.querySelector('#mark-all-read').addEventListener('click', () => {
-            this.handleMarkAllRead();
-        });
-
-        this.container.querySelector('#clear-notifications').addEventListener('click', () => {
-            this.handleClearAll();
-        });
-
-        // Listen for notification updates
-        window.addEventListener('memberpress_notification', (event) => {
-            if (['notification_added', 'notifications_updated', 'notifications_cleared'].includes(event.detail.type)) {
+        // Set up message listener for background script communication
+        chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+            if (message.type === 'notification_update') {
                 this.loadNotifications();
             }
         });
     }
 
+    async loadSettings() {
+        return new Promise((resolve) => {
+            chrome.storage.sync.get({
+                notifications: {
+                    enabled: true,
+                    failedPayments: true,
+                    newMembers: true,
+                    canceledSubscriptions: true,
+                    expiringMemberships: true,
+                    checkInterval: 5, // minutes
+                    lastCheck: null
+                }
+            }, (items) => resolve(items.notifications));
+        });
+    }
+
     async loadNotifications() {
-        this.showLoading();
-        const notifications = await this.notificationService.loadNotifications();
-        this.renderNotifications(this.filterNotifications(notifications));
-        this.hideLoading();
-    }
-
-    filterNotifications(notifications) {
-        if (this.currentFilter === 'all') return notifications;
-        return notifications.filter(n => n.type === this.currentFilter);
-    }
-
-    renderNotifications(notifications) {
-        if (notifications.length === 0) {
-            this.listElement.innerHTML = this.getEmptyStateHTML();
-            return;
-        }
-
-        this.listElement.innerHTML = notifications.map(notification => 
-            this.getNotificationHTML(notification)
-        ).join('');
-
-        // Attach click handlers to individual notifications
-        this.listElement.querySelectorAll('.notification-item').forEach(item => {
-            item.addEventListener('click', () => {
-                this.handleNotificationClick(item.dataset.id);
+        return new Promise((resolve) => {
+            chrome.storage.local.get({ notifications: [] }, (items) => {
+                this.notifications = items.notifications;
+                this.updateBadge();
+                resolve(this.notifications);
             });
         });
     }
 
-    getNotificationHTML(notification) {
-        return `
-            <div class="notification-item ${notification.read ? '' : 'unread'}" 
-                 data-id="${notification.id}">
-                <div class="notification-icon ${this.getIconClass(notification.type)}"></div>
-                <div class="notification-content">
-                    <div class="notification-header">
-                        <span class="notification-title">${notification.title}</span>
-                        <span class="notification-time">
-                            ${this.formatTimeAgo(notification.timestamp)}
-                        </span>
-                    </div>
-                    <div class="notification-message">${notification.message}</div>
-                </div>
-            </div>
-        `;
+    async saveNotifications() {
+        return new Promise((resolve) => {
+            chrome.storage.local.set({ 
+                notifications: this.notifications 
+            }, () => {
+                this.updateBadge();
+                resolve();
+            });
+        });
     }
 
-    getEmptyStateHTML() {
-        return `
-            <div class="empty-state">
-                <div class="empty-icon"></div>
-                <p>No notifications</p>
-            </div>
-        `;
-    }
-
-    getIconClass(type) {
-        switch (type) {
-            case 'failed_payment': return 'icon-alert';
-            case 'new_member': return 'icon-user';
-            case 'subscription_canceled': return 'icon-x';
-            case 'membership_expiring': return 'icon-clock';
-            default: return 'icon-bell';
-        }
-    }
-
-    formatTimeAgo(timestamp) {
-        const seconds = Math.floor((Date.now() - timestamp) / 1000);
+    startPeriodicCheck() {
+        if (!this.settings.enabled) return;
         
-        if (seconds < 60) return 'just now';
-        if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
-        if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+        // Initial check
+        this.checkForUpdates();
         
-        return new Date(timestamp).toLocaleDateString();
+        // Set up periodic checks
+        setInterval(() => {
+            this.checkForUpdates();
+        }, this.settings.checkInterval * 60 * 1000);
     }
 
-    async handleNotificationClick(id) {
-        await this.notificationService.markAsRead([id]);
-        this.loadNotifications();
-    }
-
-    async handleMarkAllRead() {
-        const notifications = await this.notificationService.loadNotifications();
-        const unreadIds = notifications
-            .filter(n => !n.read)
-            .map(n => n.id);
-            
-        if (unreadIds.length) {
-            await this.notificationService.markAsRead(unreadIds);
-            this.loadNotifications();
+    async checkForUpdates() {
+        if (!this.settings.enabled) return;
+        
+        const now = Date.now();
+        const lastCheck = this.settings.lastCheck || 0;
+        
+        try {
+            const updates = await this.fetchUpdates(lastCheck);
+            await this.processUpdates(updates);
+            await this.updateLastCheck(now);
+        } catch (error) {
+            console.error('Error checking for updates:', error);
         }
     }
 
-    async handleClearAll() {
-        if (confirm('Are you sure you want to clear all notifications?')) {
-            await this.notificationService.clearNotifications();
-            this.loadNotifications();
+    async fetchUpdates(since) {
+        const credentials = await this.getCredentials();
+        if (!credentials.baseUrl || !credentials.apiKey) {
+            throw new Error('API credentials not configured');
+        }
+
+        const updates = {
+            failedPayments: [],
+            newMembers: [],
+            canceledSubscriptions: [],
+            expiringMemberships: []
+        };
+
+        if (this.settings.failedPayments) {
+            updates.failedPayments = await this.fetchFailedPayments(since);
+        }
+
+        if (this.settings.newMembers) {
+            updates.newMembers = await this.fetchNewMembers(since);
+        }
+
+        if (this.settings.canceledSubscriptions) {
+            updates.canceledSubscriptions = await this.fetchCanceledSubscriptions(since);
+        }
+
+        if (this.settings.expiringMemberships) {
+            updates.expiringMemberships = await this.fetchExpiringMemberships();
+        }
+
+        return updates;
+    }
+
+    async fetchFailedPayments(since) {
+        const response = await this.makeApiRequest('transactions', {
+            status: 'failed',
+            after: new Date(since).toISOString()
+        });
+        return response.data || [];
+    }
+
+    async fetchNewMembers(since) {
+        const response = await this.makeApiRequest('members', {
+            after: new Date(since).toISOString()
+        });
+        return response.data || [];
+    }
+
+    async fetchCanceledSubscriptions(since) {
+        const response = await this.makeApiRequest('subscriptions', {
+            status: 'cancelled',
+            after: new Date(since).toISOString()
+        });
+        return response.data || [];
+    }
+
+    async fetchExpiringMemberships() {
+        const thirtyDaysFromNow = new Date();
+        thirtyDaysFromNow.setDate(thirtyDaysFromNow.getDate() + 30);
+        
+        const response = await this.makeApiRequest('transactions', {
+            status: 'active',
+            expires_before: thirtyDaysFromNow.toISOString()
+        });
+        return response.data || [];
+    }
+
+    async processUpdates(updates) {
+        const notifications = [];
+
+        // Process failed payments
+        updates.failedPayments.forEach(payment => {
+            notifications.push({
+                id: `payment-${payment.id}`,
+                type: 'failed_payment',
+                title: 'Failed Payment',
+                message: `Payment failed for ${payment.member.email} (${payment.total})`,
+                data: payment,
+                timestamp: Date.now(),
+                read: false
+            });
+        });
+
+        // Process new members
+        updates.newMembers.forEach(member => {
+            notifications.push({
+                id: `member-${member.id}`,
+                type: 'new_member',
+                title: 'New Member',
+                message: `${member.first_name} ${member.last_name} (${member.email}) has joined`,
+                data: member,
+                timestamp: Date.now(),
+                read: false
+            });
+        });
+
+        // Process canceled subscriptions
+        updates.canceledSubscriptions.forEach(subscription => {
+            notifications.push({
+                id: `subscription-${subscription.id}`,
+                type: 'subscription_canceled',
+                title: 'Subscription Canceled',
+                message: `${subscription.member.email}'s subscription was canceled`,
+                data: subscription,
+                timestamp: Date.now(),
+                read: false
+            });
+        });
+
+        // Process expiring memberships
+        updates.expiringMemberships.forEach(membership => {
+            const daysUntilExpiry = this.calculateDaysUntilExpiry(membership.expires_at);
+            if (daysUntilExpiry <= 30 && daysUntilExpiry > 0) {
+                notifications.push({
+                    id: `expiring-${membership.id}`,
+                    type: 'membership_expiring',
+                    title: 'Membership Expiring Soon',
+                    message: `${membership.member.email}'s membership expires in ${daysUntilExpiry} days`,
+                    data: membership,
+                    timestamp: Date.now(),
+                    read: false
+                });
+            }
+        });
+
+        if (notifications.length > 0) {
+            this.notifications = [...notifications, ...this.notifications].slice(0, 100);
+            await this.saveNotifications();
+            this.dispatchEvent('notifications_updated');
         }
     }
 
-    showLoading() {
-        this.listElement.innerHTML = `
-            <div class="loading-spinner">
-                <div class="spinner"></div>
-            </div>
-        `;
+    calculateDaysUntilExpiry(expiryDate) {
+        const now = new Date();
+        const expiry = new Date(expiryDate);
+        const diffTime = expiry - now;
+        return Math.ceil(diffTime / (1000 * 60 * 60 * 24));
     }
 
-    hideLoading() {
-        const spinner = this.listElement.querySelector('.loading-spinner');
-        if (spinner) spinner.remove();
+    async markAsRead(notificationIds) {
+        let updated = false;
+        this.notifications = this.notifications.map(notification => {
+            if (notificationIds.includes(notification.id) && !notification.read) {
+                updated = true;
+                return { ...notification, read: true };
+            }
+            return notification;
+        });
+
+        if (updated) {
+            await this.saveNotifications();
+            this.dispatchEvent('notifications_updated');
+        }
+    }
+
+    async clearNotifications() {
+        this.notifications = [];
+        await this.saveNotifications();
+        this.dispatchEvent('notifications_cleared');
+    }
+
+    updateBadge() {
+        const unreadCount = this.notifications.filter(n => !n.read).length;
+        
+        chrome.action.setBadgeText({
+            text: unreadCount > 0 ? unreadCount.toString() : ''
+        });
+
+        chrome.action.setBadgeBackgroundColor({
+            color: '#FF0000'
+        });
+    }
+
+    dispatchEvent(type, data = null) {
+        const event = new CustomEvent('memberpress_notification', {
+            detail: { type, data }
+        });
+        window.dispatchEvent(event);
+    }
+
+    async getCredentials() {
+        return new Promise((resolve) => {
+            chrome.storage.sync.get({
+                baseUrl: '',
+                apiKey: ''
+            }, resolve);
+        });
+    }
+
+    async makeApiRequest(endpoint, params = {}) {
+        const credentials = await this.getCredentials();
+        if (!credentials.baseUrl || !credentials.apiKey) {
+            throw new Error('API credentials not configured');
+        }
+
+        const queryString = new URLSearchParams(params).toString();
+        const url = `${credentials.baseUrl}/wp-json/mp/v1/${endpoint}${queryString ? '?' + queryString : ''}`;
+
+        const response = await fetch(url, {
+            headers: {
+                'MEMBERPRESS-API-KEY': credentials.apiKey,
+                'Accept': 'application/json'
+            }
+        });
+
+        if (!response.ok) {
+            throw new Error(`API request failed: ${response.statusText}`);
+        }
+
+        return await response.json();
+    }
+
+    async updateLastCheck(timestamp) {
+        this.settings.lastCheck = timestamp;
+        return new Promise((resolve) => {
+            chrome.storage.sync.set({
+                notifications: {
+                    ...this.settings,
+                    lastCheck: timestamp
+                }
+            }, resolve);
+        });
     }
 }
