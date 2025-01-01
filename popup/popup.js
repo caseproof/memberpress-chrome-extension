@@ -19,7 +19,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     function initialize() {
         initializeTabs();
         initializeSearch();
-        initializeNotifications();
         checkConfiguration();
     }
 
@@ -56,27 +55,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Initialize notification handling
-    function initializeNotifications() {
-        // Set up filter buttons
-        document.querySelectorAll('.filter-btn').forEach(button => {
-            button.addEventListener('click', () => {
-                document.querySelectorAll('.filter-btn').forEach(btn => btn.classList.remove('active'));
-                button.classList.add('active');
-                currentNotificationFilter = button.dataset.filter;
-                loadNotifications();
-            });
-        });
-
-        // Set up action buttons
-        document.getElementById('mark-all-read')?.addEventListener('click', markAllNotificationsRead);
-        document.getElementById('clear-notifications')?.addEventListener('click', clearAllNotifications);
-
-        // Initial notification load
-        loadNotifications();
-        updateNotificationCount();
-    }
-
+  
     // Check extension configuration
     async function checkConfiguration() {
         const settings = await getStoredSettings();
@@ -306,159 +285,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Load and display notifications
-    async function loadNotifications() {
-        const notifications = await sendMessage({ type: 'getNotifications' });
-        const filteredNotifications = currentNotificationFilter === 'all' 
-            ? notifications 
-            : notifications.filter(n => n.type === currentNotificationFilter);
-
-        displayNotifications(filteredNotifications);
-        updateNotificationCount(notifications);
-    }
-
-    // Display notifications
-    function displayNotifications(notifications) {
-        const emptyState = document.getElementById('notifications-empty');
-
-        if (!notifications.length) {
-            notificationsList.style.display = 'none';
-            emptyState.style.display = 'flex';
-            return;
-        }
-
-        notificationsList.style.display = 'flex';
-        emptyState.style.display = 'none';
-        notificationsList.innerHTML = '';
-
-        notifications.forEach(notification => {
-            const notificationHtml = `
-                <div class="notification-item ${notification.read ? '' : 'unread'}" data-id="${notification.id}">
-                    <div class="notification-icon icon-${notification.type}">
-                        ${getNotificationIcon(notification.type)}
-                    </div>
-                    <div class="notification-content">
-                        <div class="notification-title">${notification.title}</div>
-                        <div class="notification-message">${notification.message}</div>
-                        <div class="notification-time">
-                            <span class="time-badge ${isRecent(notification.timestamp) ? 'recent' : ''}">
-                                ${formatRelativeTime(notification.timestamp)}
-                            </span>
-                        </div>
-                    </div>
-                    <div class="notification-actions">
-                        ${getNotificationActions(notification)}
-                    </div>
-                </div>
-            `;
-
-            notificationsList.insertAdjacentHTML('beforeend', notificationHtml);
-        });
-
-        notificationsList.querySelectorAll('.notification-item').forEach(item => {
-            item.addEventListener('click', () => handleNotificationClick(item.dataset.id));
-        });
-    }
-
-    // Update notification count badge
-    async function updateNotificationCount() {
-        const notifications = await sendMessage({ type: 'getNotifications' });
-        const unreadCount = notifications.filter(n => !n.read).length;
-        const badge = document.getElementById('notification-count');
-        
-        if (unreadCount > 0) {
-            badge.textContent = unreadCount;
-            badge.style.display = 'inline-flex';
-        } else {
-            badge.style.display = 'none';
-        }
-    }
-
-    // Handle notification click
-    async function handleNotificationClick(notificationId) {
-        await sendMessage({
-            type: 'markAsRead',
-            ids: [notificationId]
-        });
-        
-        const notification = document.querySelector(`.notification-item[data-id="${notificationId}"]`);
-        if (notification) {
-            notification.classList.remove('unread');
-        }
-        
-        updateNotificationCount();
-    }
-
-    // Mark all notifications as read
-    async function markAllNotificationsRead() {
-        const notifications = await sendMessage({ type: 'getNotifications' });
-        const unreadIds = notifications.filter(n => !n.read).map(n => n.id);
-        
-        if (unreadIds.length) {
-            await sendMessage({
-                type: 'markAsRead',
-                ids: unreadIds
-            });
-            
-            loadNotifications();
-        }
-    }
-
-    // Clear all notifications
-    async function clearAllNotifications() {
-        if (confirm('Are you sure you want to clear all notifications?')) {
-            await sendMessage({ type: 'clearNotifications' });
-            loadNotifications();
-        }
-    }
-
-    // Helper: Get notification icon
-    function getNotificationIcon(type) {
-        switch (type) {
-            case 'failed_payment': return '💳';
-            case 'new_member': return '👤';
-            case 'subscription_canceled': return '🚫';
-            case 'membership_expiring': return '⏰';
-            default: return '🔔';
-        }
-    }
-
-    // Helper: Check if notification is recent
-    function isRecent(timestamp) {
-        return (new Date() - new Date(timestamp)) < 86400000; // 24 hours
-    }
-
-    // Helper: Get notification actions
-    function getNotificationActions(notification) {
-        switch (notification.type) {
-            case 'failed_payment':
-                return `
-                    <button class="notification-action primary" data-action="view-transaction" data-id="${notification.data.id}">
-                        View Transaction
-                    </button>
-                `;
-            case 'new_member':
-                return `
-                    <button class="notification-action primary" data-action="view-member" data-id="${notification.data.id}">
-                        View Member
-                    </button>
-                `;
-            case 'subscription_canceled':
-                return `
-                    <button class="notification-action primary" data-action="view-subscription" data-id="${notification.data.id}">
-                        View Subscription
-                    </button>
-                `;
-            case 'membership_expiring':
-                return `
-                    <button class="notification-action primary" data-action="view-membership" data-id="${notification.data.id}">
-                        View Membership
-                    </button>
-                `;
-            default:
-                return '';
-        }
-    }
+   
 
     // Helper: Navigate to member page in WordPress admin
     async function navigateToMemberPage(memberId) {
@@ -506,35 +333,6 @@ document.addEventListener('DOMContentLoaded', async () => {
         });
     }
 
-    // Handle notification action clicks
-    document.addEventListener('click', async (e) => {
-        const actionButton = e.target.closest('.notification-action');
-        if (!actionButton) return;
-
-        e.stopPropagation(); // Prevent notification item click
-
-        const { action, id } = actionButton.dataset;
-        const settings = await getStoredSettings();
-
-        switch (action) {
-            case 'view-transaction':
-                chrome.tabs.create({
-                    url: `${settings.baseUrl}/wp-admin/admin.php?page=memberpress-trans&action=edit&id=${id}`
-                });
-                break;
-            case 'view-member':
-                navigateToMemberPage(id);
-                break;
-            case 'view-subscription':
-                navigateToSubscriptionPage(id);
-                break;
-            case 'view-membership':
-                chrome.tabs.create({
-                    url: `${settings.baseUrl}/wp-admin/admin.php?page=memberpress-memberships&action=edit&id=${id}`
-                });
-                break;
-        }
-    });
 
     // Handle keyboard shortcuts
     document.addEventListener('keydown', (e) => {
