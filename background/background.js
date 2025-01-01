@@ -1,8 +1,3 @@
-import { NotificationService } from './services/NotificationService.js';
-
-const notificationService = new NotificationService();
-await notificationService.initialize();
-
 // Handle extension installation
 chrome.runtime.onInstalled.addListener(() => {
     console.log("MemberPress Manager Extension Installed");
