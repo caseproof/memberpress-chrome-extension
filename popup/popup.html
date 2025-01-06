@@ -1,25 +1,27 @@
 <!DOCTYPE html>
 <html>
 <head>
+    <meta charset="UTF-8">
     <title>MemberPress Manager</title>
     <link rel="stylesheet" href="../styles/shared.css">
     <link rel="stylesheet" href="popup.css">
     <link rel="stylesheet" href="../styles/notifications.css">
 </head>
 <body>
-    <div class="container">
-        <!-- Header with tabs -->
-        <div class="header">
-            <div class="tab-buttons">
-                <button class="tab-button active" data-tab="members">Members</button>
-                <button class="tab-button" data-tab="subscriptions">Subscriptions</button>
-                <button class="tab-button" data-tab="notifications">Notifications</button>
-            </div>
-            <div class="search-box">
-                <input type="text" id="search" placeholder="Search...">
-            </div>
+    <!-- Header with tabs -->
+    <header class="header">
+        <img src="../icons/icon48.png" alt="MemberPress" class="logo" width="48" height="48">
+        <div class="tab-buttons">
+            <button class="tab-button active" data-tab="members">Members</button>
+            <button class="tab-button" data-tab="subscriptions">Subscriptions</button>
+            <button class="tab-button" data-tab="notifications">Notifications</button>
         </div>
+        <div class="search-box">
+            <input type="text" id="search" placeholder="Search...">
+        </div>
+    </header>
 
+    <div class="container">
         <!-- Members Tab -->
         <div id="members-tab" class="tab-content active">
             <!-- Loading spinner -->
@@ -55,6 +57,9 @@
         <!-- Status message -->
         <div id="status" class="status"></div>
     </div>
+    <footer class="footer">
+        <p>Copyright © 2025 MemberPress, LLC. All rights reserved.</p>
+    </footer>
     <script type="module" src="popup.js"></script>
 </body>
 </html>
